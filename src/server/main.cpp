@@ -24,6 +24,9 @@
 #include "version.h"
 #include "module_processing.h"
 #include "remix_api.h"
+ // MHFZ start : required include
+#include "textures_manager.h"
+// MHFZ end
 
 #include "util_bridge_assert.h"
 #include "util_circularbuffer.h"
@@ -61,6 +64,10 @@
 using namespace Commands;
 using namespace bridge_util;
 using namespace remixapi::util;
+
+// MHFZ start
+static TexturesManager texturesManager;
+// MHFZ end
 
 // NOTE: This extension is really useful for debugging the Bridge child process from the parent process:
 // https://marketplace.visualstudio.com/items?itemName=vsdbgplat.MicrosoftChildProcessDebuggingPowerTool
@@ -134,6 +141,10 @@ std::unordered_map<uint32_t, IDirect3DPixelShader9*> gpD3DPixelShaders;
 std::unordered_map<uint32_t, IDirect3DSwapChain9*> gpD3DSwapChains;
 std::unordered_map<uint32_t, IDirect3DQuery9*> gpD3DQuery;
 std::unordered_map<uint32_t, void*> gMapRemixApi;
+
+// MHFZ start
+uint32_t gCurrentCreatedTexture = 0;
+// MHFZ end
 
 // Global state
 bool gbBridgeRunning = true;
@@ -773,6 +784,12 @@ void ProcessDeviceCommandQueue() {
         const auto hresult = pD3DDevice->CreateTexture(IN Width, IN Height, IN Levels, IN Usage, IN Format, IN Pool, OUT & pTexture, IN nullptr);
         if (SUCCEEDED(hresult)) {
           gpD3DResources[pHandle] = pTexture;
+          // MHFZ start : store current created texture handle to be able to overwrite it
+          gCurrentCreatedTexture = pHandle;
+        } 
+        else {
+          gCurrentCreatedTexture = 0;
+          // MHFZ end
         }
         assert(SUCCEEDED(hresult));
         SEND_OPTIONAL_CREATE_FUNCTION_SERVER_RESPONSE(hresult, currentUID);
@@ -1225,7 +1242,16 @@ void ProcessDeviceCommandQueue() {
           pTexture = (IDirect3DBaseTexture9*) gpD3DResources[pHandle];
           assert(pTexture != nullptr);
         }
-        const auto hresult = pD3DDevice->SetTexture(IN Stage, IN pTexture);
+        // MHFZ start : if texture can be replaced set the new one
+        HRESULT hresult = FALSE;
+        IDirect3DBaseTexture9* replaceTexture = texturesManager.setTexture(pD3DDevice, pHandle);
+        if (replaceTexture) {
+          hresult = pD3DDevice->SetTexture(IN Stage, IN replaceTexture);
+        } 
+        else {
+          hresult = pD3DDevice->SetTexture(IN Stage, IN pTexture);
+        }
+        // MHFZ end
         assert(SUCCEEDED(hresult));
         SEND_OPTIONAL_SERVER_RESPONSE(hresult, currentUID);
         break;
@@ -1999,6 +2025,9 @@ void ProcessDeviceCommandQueue() {
       {
         GET_HND(pHandle);
         const auto& pTexture = (IDirect3DTexture9*) gpD3DResources[pHandle];
+        // MHFZ start
+        texturesManager.destroyTexture(pHandle);
+        // MHFZ end
         safeDestroy(pTexture, pHandle);
         gpD3DResources.erase(pHandle);
         break;
@@ -2796,6 +2825,49 @@ void ProcessDeviceCommandQueue() {
         gpD3DVolumes.erase(pHandle);
         break;
       }
+      // MHFZ start : specific commmand to load new texture based of TextureHash
+      case MHFZ_LoadTexture:
+      {
+        PULL_U(TextureHash);
+        PULL_U(MipLevels);
+        PULL_U(Usage);
+        PULL(D3DFORMAT, Format);
+        PULL(D3DPOOL, Pool);
+        PULL_D(Filter);
+        PULL_D(MipFilter);
+        PULL(D3DCOLOR, ColorKey);
+
+        wchar_t file_prefix[MAX_PATH] = L"";
+        GetModuleFileNameW(nullptr, file_prefix, ARRAYSIZE(file_prefix));
+
+        std::filesystem::path folderPath = file_prefix;
+        folderPath = folderPath.parent_path();
+        folderPath = folderPath.parent_path();
+        folderPath /= "texturePack";
+        HRESULT result = FALSE;
+        if (std::filesystem::exists(folderPath) && gCurrentCreatedTexture != 0) {
+          wchar_t hash_string[11];
+          swprintf_s(hash_string, L"%x", TextureHash);
+          std::wstring strHash = hash_string;
+          for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
+            std::filesystem::path texturePath = entry;
+            texturePath /= strHash;
+            texturePath += ".png";
+
+            // Check if a replacement file for this texture hash exists and if so, overwrite the texture data with its contents
+            if (std::filesystem::exists(texturePath)) {
+              texturesManager.pushToLoad(texturePath.string(), MipLevels, Usage, Pool, Filter, MipFilter, ColorKey, gCurrentCreatedTexture);
+            }
+          }
+        }
+
+        gCurrentCreatedTexture = 0;
+        SEND_OPTIONAL_CREATE_FUNCTION_SERVER_RESPONSE(result, currentUID);
+
+        break;
+      }
+      // MHFZ end
+
       /*
        * BridgeApi commands
        */
@@ -3196,6 +3268,10 @@ void ProcessDeviceCommandQueue() {
 #endif
   }
 
+  // MHFZ start
+  texturesManager.closeExecution();
+  // MHFZ end
+
   // Check if we exited the command processing loop unexpectedly while the bridge is still enabled
   if (!done && gbBridgeRunning) {
     Logger::debug("The device command processing loop was exited unexpectedly, either due to timing out or some other command queue issue.");
@@ -3402,6 +3478,17 @@ static inline bool initFileSys() {
   return true;
 }
 
+// MHFZ start : specific thread to load hd texture
+void UpdateTextureThread(uint32_t _threadID) {
+  do {
+    if (gpD3DDevices.size() > 0) {
+      texturesManager.updateLoadingThread(_threadID);
+      texturesManager.update(gpD3DDevices.begin()->second, _threadID);
+    }
+  } while (texturesManager.isExecution());
+}
+// MHFZ end
+
 int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ PWSTR pCmdLine, _In_ int nCmdShow) {
   gTimeStart = std::chrono::high_resolution_clock::now();
   
@@ -3513,10 +3600,25 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
   auto moduleCmdProcessingThread = std::thread([&]() {
     processModuleCommandQueue(&bSignalDone);
   });
+
+  // MHFZ start : define every load texture threads
+  unsigned int nthreads = std::min(std::thread::hardware_concurrency(), TextureLoadThreadCount);
+  std::vector<std::thread> threadsLoadingRessource;
+  for (uint32_t threadID = 0; threadID < nthreads; ++threadID) {
+    threadsLoadingRessource.emplace_back(&UpdateTextureThread, threadID);
+  }
+  // MHFZ end
+
   // Process device commands
   ProcessDeviceCommandQueue();
   bSignalDone.store(true);
   moduleCmdProcessingThread.join();
+
+  // MHFZ start :
+  for (uint32_t threadID = 0; threadID < nthreads; ++threadID) {
+    threadsLoadingRessource[threadID].join();
+  }
+  // MHFZ end
 
   if (!dumpLeakedObjects()) {
     bridge_util::Logger::debug("No leaked objects dicovered at Direct3D module eviction.");

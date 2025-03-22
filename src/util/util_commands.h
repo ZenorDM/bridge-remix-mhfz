@@ -54,6 +54,10 @@ namespace Commands {
     Bridge_SharedHeap_Alloc,
     Bridge_SharedHeap_Dealloc,
 
+    // MHFZ start : specif command to load a texture based on texture CRC 
+    MHFZ_LoadTexture,
+    // MHFZ end
+    
     // Unlink x86 d3d9 resource from x64 counterpart to prevent hash
     // collisions at server side. The resource must be properly
     // desposed of, or known to be released before the unlink to
