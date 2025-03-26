@@ -20,7 +20,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 #include <windows.h>
-
+#include "d3d9/d3d9.h"
 #include "version.h"
 #include "module_processing.h"
 #include "remix_api.h"
@@ -55,7 +55,7 @@
 
 #include "../tracy/tracy.hpp"
 #include <iostream>
-#include <d3d9.h>
+
 #include <assert.h>
 #include <map>
 #include <atomic>
@@ -143,7 +143,12 @@ std::unordered_map<uint32_t, IDirect3DQuery9*> gpD3DQuery;
 std::unordered_map<uint32_t, void*> gMapRemixApi;
 
 // MHFZ start
+#if !RTX_REMIX
 uint32_t gCurrentCreatedTexture = 0;
+#else
+IDirect3DBaseTexture9* gCurrentCreatedTexture = nullptr;
+#endif
+
 // MHFZ end
 
 // Global state
@@ -785,10 +790,18 @@ void ProcessDeviceCommandQueue() {
         if (SUCCEEDED(hresult)) {
           gpD3DResources[pHandle] = pTexture;
           // MHFZ start : store current created texture handle to be able to overwrite it
+#if !RTX_REMIX
           gCurrentCreatedTexture = pHandle;
+#else
+          gCurrentCreatedTexture = pTexture;
+#endif
         } 
         else {
+#if !RTX_REMIX
           gCurrentCreatedTexture = 0;
+#else
+          gCurrentCreatedTexture = 0;
+#endif
           // MHFZ end
         }
         assert(SUCCEEDED(hresult));
@@ -1244,6 +1257,7 @@ void ProcessDeviceCommandQueue() {
         }
         // MHFZ start : if texture can be replaced set the new one
         HRESULT hresult = FALSE;
+        #if !RTX_REMIX
         IDirect3DBaseTexture9* replaceTexture = texturesManager.setTexture(pD3DDevice, pHandle);
         if (replaceTexture) {
           hresult = pD3DDevice->SetTexture(IN Stage, IN replaceTexture);
@@ -1251,6 +1265,9 @@ void ProcessDeviceCommandQueue() {
         else {
           hresult = pD3DDevice->SetTexture(IN Stage, IN pTexture);
         }
+        #else
+        hresult = pD3DDevice->SetTexture(IN Stage, IN pTexture);
+        #endif
         // MHFZ end
         assert(SUCCEEDED(hresult));
         SEND_OPTIONAL_SERVER_RESPONSE(hresult, currentUID);
@@ -2026,7 +2043,11 @@ void ProcessDeviceCommandQueue() {
         GET_HND(pHandle);
         const auto& pTexture = (IDirect3DTexture9*) gpD3DResources[pHandle];
         // MHFZ start
+        #if !RTX_REMIX
         texturesManager.destroyTexture(pHandle);
+        #else
+        gpD3DDevices.begin()->second->DestroyBaseTexture(pTexture);
+        #endif
         // MHFZ end
         safeDestroy(pTexture, pHandle);
         gpD3DResources.erase(pHandle);
@@ -2836,7 +2857,7 @@ void ProcessDeviceCommandQueue() {
         PULL_D(Filter);
         PULL_D(MipFilter);
         PULL(D3DCOLOR, ColorKey);
-
+        #if !RTX_REMIX
         wchar_t file_prefix[MAX_PATH] = L"";
         GetModuleFileNameW(nullptr, file_prefix, ARRAYSIZE(file_prefix));
 
@@ -2860,9 +2881,12 @@ void ProcessDeviceCommandQueue() {
             }
           }
         }
-
         gCurrentCreatedTexture = 0;
-        SEND_OPTIONAL_CREATE_FUNCTION_SERVER_RESPONSE(result, currentUID);
+        #else
+        gpD3DDevices.begin()->second->SendBaseTextureHash(TextureHash, gCurrentCreatedTexture);
+        gCurrentCreatedTexture = nullptr;
+        #endif
+        SEND_OPTIONAL_CREATE_FUNCTION_SERVER_RESPONSE(S_OK, currentUID);
 
         break;
       }
@@ -3269,7 +3293,9 @@ void ProcessDeviceCommandQueue() {
   }
 
   // MHFZ start
+  #if !RTX_REMIX
   texturesManager.closeExecution();
+  #endif
   // MHFZ end
 
   // Check if we exited the command processing loop unexpectedly while the bridge is still enabled
@@ -3479,6 +3505,7 @@ static inline bool initFileSys() {
 }
 
 // MHFZ start : specific thread to load hd texture
+#if !RTX_REMIX
 void UpdateTextureThread(uint32_t _threadID) {
   do {
     if (gpD3DDevices.size() > 0) {
@@ -3487,6 +3514,7 @@ void UpdateTextureThread(uint32_t _threadID) {
     }
   } while (texturesManager.isExecution());
 }
+#endif
 // MHFZ end
 
 int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ PWSTR pCmdLine, _In_ int nCmdShow) {
@@ -3602,11 +3630,13 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
   });
 
   // MHFZ start : define every load texture threads
+  #if !RTX_REMIX
   unsigned int nthreads = std::min(std::thread::hardware_concurrency(), TextureLoadThreadCount);
   std::vector<std::thread> threadsLoadingRessource;
   for (uint32_t threadID = 0; threadID < nthreads; ++threadID) {
     threadsLoadingRessource.emplace_back(&UpdateTextureThread, threadID);
   }
+  #endif
   // MHFZ end
 
   // Process device commands
@@ -3614,10 +3644,12 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
   bSignalDone.store(true);
   moduleCmdProcessingThread.join();
 
-  // MHFZ start :
+  // MHFZ start
+  #if !RTX_REMIX
   for (uint32_t threadID = 0; threadID < nthreads; ++threadID) {
     threadsLoadingRessource[threadID].join();
   }
+  #endif
   // MHFZ end
 
   if (!dumpLeakedObjects()) {

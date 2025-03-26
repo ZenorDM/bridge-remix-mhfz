@@ -678,41 +678,18 @@ class DirectInput8Hook: public DirectInputHookBase<8> {
            static_cast<const uint8_t*>(pSrcData),
            SrcDataSize);
 
-    wchar_t file_prefix[MAX_PATH] = L"";
-    GetModuleFileNameW(nullptr, file_prefix, ARRAYSIZE(file_prefix));
-
-    std::filesystem::path folderPath = file_prefix;
-    folderPath = folderPath.parent_path();
-    folderPath /= "texturePack";
-
-    wchar_t hash_string[11];
-    swprintf_s(hash_string, L"%x", hash);
-    std::wstring strHash = hash_string;
-    bool found = false;
+ 
     HRESULT result = S_FALSE;
     result = OrigD3DXCreateTextureFromFileInMemoryEx(pDevice, pSrcData, SrcDataSize, Width, Height, MipLevels, Usage, Format, Pool, Filter, MipFilter, ColorKey, pSrcInfo, pPalette, ppTexture);
-    bool textureFound = false;
-    if (result == S_OK && std::filesystem::exists(folderPath)) {
-      for (const auto& entry : std::filesystem::directory_iterator(folderPath)) {
-        std::filesystem::path texturePath = entry;
-        texturePath /= strHash;
-        texturePath += ".png";
 
-        // Check if a replacement file for this texture hash exists and if so, overwrite the texture data with its contents
-        if (std::filesystem::exists(texturePath)) {
-
-          textureFound = true;
-          UID currentUID = 0;
-          {
-            ClientMessage c(Commands::MHFZ_LoadTexture);
-            currentUID = c.get_uid();
-            c.send_many(hash, MipLevels, Usage, Format, Pool, Filter, MipFilter, ColorKey);
-          }
-          WAIT_FOR_OPTIONAL_CREATE_FUNCTION_SERVER_RESPONSE("LoadTexture()", D3DERR_INVALIDCALL, currentUID);
-        }
-      }
+    UID currentUID = 0;
+    {
+      ClientMessage c(Commands::MHFZ_LoadTexture);
+      currentUID = c.get_uid();
+      c.send_many(hash, MipLevels, Usage, Format, Pool, Filter, MipFilter, ColorKey);
     }
-
+    WAIT_FOR_OPTIONAL_CREATE_FUNCTION_SERVER_RESPONSE("LoadTexture()", D3DERR_INVALIDCALL, currentUID);
+ 
     return result;
   }
   // MHFZ end

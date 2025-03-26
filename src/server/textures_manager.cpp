@@ -4,7 +4,7 @@
 #include "stb_image.h"
 #include <thread>
 
-
+#if !RTX_REMIX
 Texture::Texture(std::string& texturePath, UINT mipLevels, UINT usage, D3DPOOL pool, DWORD filter, DWORD mipFilter, D3DCOLOR colorKey) :
   path(texturePath), mipLevels(mipLevels), usage(usage), pool(pool), filter(filter), mipFilter(mipFilter), colorKey(colorKey)
 {
@@ -18,18 +18,18 @@ void TexturesManager::pushToLoad(std::string& texturePath,UINT mipLevels, UINT u
   size_t minThread = 0xFFffFFff;
   uint32_t selectedThread = 0;
   for (uint32_t threadID = 0; threadID < nthreads; ++threadID) {
-    if (minThread > m_Textures[threadID].size()) {
-      minThread = m_Textures[threadID].size();
+    if (minThread > m_textures[threadID].size()) {
+      minThread = m_textures[threadID].size();
       selectedThread = threadID;
     }
 
   }
 
-  m_Textures[selectedThread].emplace(textureHdl, Texture { texturePath, mipLevels, usage,pool, filter, mipFilter, colorKey });
+  m_textures[selectedThread].emplace(textureHdl, Texture { texturePath, mipLevels, usage,pool, filter, mipFilter, colorKey });
 }
 
 void TexturesManager::update(IDirect3DDevice9* device, uint32_t threadID) {
-  for (auto& [hdl, texture] : m_Textures[threadID]) {
+  for (auto& [hdl, texture] : m_textures[threadID]) {
     if (texture.state == TextureState::Loaded) {
       texture.mapTexture(device);
     }
@@ -39,7 +39,7 @@ void TexturesManager::update(IDirect3DDevice9* device, uint32_t threadID) {
 // Happen on loading thread
 void TexturesManager::updateLoadingThread(uint32_t threadID) {
   std::vector<UINT> toRemove;
-  for (auto& [hdl, texture] : m_Textures[threadID]) {
+  for (auto& [hdl, texture] : m_textures[threadID]) {
     if (texture.state == TextureState::None) {
       texture.loadFile();
     }
@@ -47,7 +47,7 @@ void TexturesManager::updateLoadingThread(uint32_t threadID) {
     if (texture.state == TextureState::Ready) {
       texture.freeData();
     }
-    if (texture.releseRegister) {
+    if (texture.releaseRegister) {
       if (texture.state >= TextureState::Ready) {
         texture.texture->Release();
         texture.texture = nullptr;
@@ -59,7 +59,7 @@ void TexturesManager::updateLoadingThread(uint32_t threadID) {
     }
   }
   for (UINT hdl : toRemove) {
-    m_Textures[threadID].erase(hdl);
+    m_textures[threadID].erase(hdl);
   }
 }
 
@@ -67,8 +67,8 @@ IDirect3DTexture9* TexturesManager::setTexture(IDirect3DDevice9* device, UINT hd
 
   unsigned int nthreads = std::min(std::thread::hardware_concurrency(), TextureLoadThreadCount);
   for (uint32_t threadID = 0; threadID < nthreads; ++threadID) {
-    auto it = m_Textures[threadID].find(hdl);
-    if (it != m_Textures[threadID].end()) {
+    auto it = m_textures[threadID].find(hdl);
+    if (it != m_textures[threadID].end()) {
       Texture& texture = it->second;
       if (it->second.state == TextureState::Unloaded) {
         return texture.texture;
@@ -81,10 +81,10 @@ IDirect3DTexture9* TexturesManager::setTexture(IDirect3DDevice9* device, UINT hd
 void TexturesManager::destroyTexture(UINT hdl) {
   unsigned int nthreads = std::min(std::thread::hardware_concurrency(), TextureLoadThreadCount);
   for (uint32_t threadID = 0; threadID < nthreads; ++threadID) {
-    auto it = m_Textures[threadID].find(hdl);
-    if (it != m_Textures[threadID].end()) {
+    auto it = m_textures[threadID].find(hdl);
+    if (it != m_textures[threadID].end()) {
       Texture& tex = it->second;
-      tex.releseRegister = true;
+      tex.releaseRegister = true;
 
     }
   }
@@ -125,3 +125,4 @@ void Texture::freeData() {
   data = nullptr;
   state = TextureState::Unloaded;
 }
+#endif
