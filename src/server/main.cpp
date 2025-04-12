@@ -149,6 +149,11 @@ uint32_t gCurrentCreatedTexture = 0;
 IDirect3DBaseTexture9* gCurrentCreatedTexture = nullptr;
 #endif
 
+// struct pass by bridge contain all gathered memory value from game
+struct MHFZGameData : public IMHFZGameData {
+  uint32_t areaID;
+  uint32_t time;
+};
 // MHFZ end
 
 // Global state
@@ -1791,6 +1796,10 @@ void ProcessDeviceCommandQueue() {
         PULL(uint32_t, hDestWindowOverride);
         PULL_OBJ(RGNDATA, pDirtyRegion);
         PULL(uint32_t, dwFlags);
+        // MHFZ start : game data
+        PULL(uint32_t, areaID);
+        PULL(uint32_t, time);
+        // MHFZ end
 
         HWND hwnd = TRUNCATE_HANDLE(HWND, hDestWindowOverride);
 
@@ -1800,6 +1809,13 @@ void ProcessDeviceCommandQueue() {
           std::stringstream ss;
           ss << "Present() failed! Check all logs for reported errors.";
         }
+        // MHFZ start : send game data through d3d9 device
+        MHFZGameData gameData;
+        gameData.areaID = areaID;
+        gameData.time = time;
+
+        gpD3DDevices.begin()->second->SendGameData(&gameData);
+        // MHFZ end
 
         // If we're syncing with the client on Present() then trigger the semaphore now
         if (GlobalOptions::getPresentSemaphoreEnabled()) {

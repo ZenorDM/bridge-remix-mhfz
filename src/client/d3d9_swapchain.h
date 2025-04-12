@@ -32,6 +32,9 @@ class Direct3DSwapChain9_LSS: public Direct3DContainer9_LSS<D3DBase<IDirect3DSwa
   HWND m_window = nullptr;
   void onDestroy() override;
   DWORD m_behaviorFlag;
+  // MHFZ start : handle to mhfohd.dll
+  HMODULE mhfoHDhandle;
+  // MHFZ end
 public:
   Direct3DSwapChain9_LSS(BaseDirect3DDevice9Ex_LSS* const pDevice,
                          const D3DPRESENT_PARAMETERS& presParam)
@@ -42,6 +45,9 @@ public:
       m_monitor = bridge_util::GetDefaultMonitor();
     }
     m_behaviorFlag = pDevice->getCreateParams().BehaviorFlags;
+    // MHFZ start : handle to mhfohd.dll
+    mhfoHDhandle = GetModuleHandleW(L"mhfo-hd.dll");
+    // MHFZ end
 
     m_children.resize(m_presParam.BackBufferCount);
     {

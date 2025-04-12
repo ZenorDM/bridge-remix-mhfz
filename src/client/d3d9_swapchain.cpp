@@ -168,6 +168,11 @@ HRESULT Direct3DSwapChain9_LSS::Present(CONST RECT* pSourceRect, CONST RECT* pDe
     return D3D_OK;
   }
 
+  // MHFZ start : load game date from mhfo-hd dll memory
+  UINT areaID = *((UINT*) ((UINT_PTR) mhfoHDhandle + 0xDC6BF48));
+  UINT time = *((UINT*) ((UINT_PTR) mhfoHDhandle + 0xE7FE170));
+  // MHFZ end
+
   // Send present first
   {
     ClientMessage c(Commands::IDirect3DSwapChain9_Present, getId());
@@ -176,6 +181,10 @@ HRESULT Direct3DSwapChain9_LSS::Present(CONST RECT* pSourceRect, CONST RECT* pDe
     c.send_data((uint32_t) hDestWindowOverride);
     c.send_data(sizeof(RGNDATA), (void*) pDirtyRegion);
     c.send_data(dwFlags);
+    // MHFZ start : use SwapChain present command to send game data information to bridge
+    c.send_data(areaID);
+    c.send_data(time);
+    // MHFZ end
   }
 
   extern HRESULT syncOnPresent();
