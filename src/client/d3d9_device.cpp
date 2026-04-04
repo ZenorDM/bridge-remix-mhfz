@@ -67,7 +67,7 @@ void Direct3DDevice9Ex_LSS<EnableSync>::onDestroy() {
   // At this point the underlying d3d9 device's refcount should be 0 and device released
   assert(getRef<D3DRefCounted::Ref::Object>() == 0 &&
          "Destroying an LSS device object with underlying D3D9 object refcount > 0!");
-   ClientMessage c { Commands::IDirect3DDevice9Ex_Destroy, getId() };
+  ClientMessage c { Commands::IDirect3DDevice9Ex_Destroy, getId() };
 }
 
 template<bool EnableSync>
@@ -172,7 +172,7 @@ template<bool EnableSync>
 UINT Direct3DDevice9Ex_LSS<EnableSync>::GetAvailableTextureMem() {
   ZoneScoped;
   LogFunctionCall();
-  
+
   UID currentUID = 0;
   {
     ClientMessage c(Commands::IDirect3DDevice9Ex_GetAvailableTextureMem, getId());
@@ -394,7 +394,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::GetSwapChain(UINT iSwapChain, IDirect
     ClientMessage c(Commands::IDirect3DDevice9Ex_GetSwapChain, getId());
     c.send_data(iSwapChain);
   }
-  
+
   return S_OK;
 }
 
@@ -442,7 +442,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::Reset(D3DPRESENT_PARAMETERS* pPresent
       }
       res = (HRESULT) DeviceBridge::get_data();
       DeviceBridge::pop_front();
-      }
+    }
 
     // Reset swapchain and link server backbuffer/depth buffer after the server reset its swapchain, or we will link to the old backbuffer/depth resources
     initImplicitObjects(presParam);
@@ -494,6 +494,11 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::Present(CONST RECT* pSourceRect, CONS
   if (remixapi::g_bInterfaceInitialized && remixapi::g_presentCallback) {
     remixapi::g_presentCallback();
   }
+  // MHFZ start
+  loadConfig();
+
+  m_camera.update();
+  // MHFZ end
 
   return m_pSwapchain->Present(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion, 0);
 }
@@ -1005,14 +1010,14 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::GetRenderTarget(DWORD RenderTargetInd
     }
     WAIT_FOR_OPTIONAL_SERVER_RESPONSE("GetRenderTarget()", D3DERR_INVALIDCALL, currentUID);
   }
-  
+
   return S_OK;
 }
 
 template<bool EnableSync>
 HRESULT Direct3DDevice9Ex_LSS<EnableSync>::SetDepthStencilSurface(IDirect3DSurface9* pNewZStencil) {
   ZoneScoped;
-  LogFunctionCall();  
+  LogFunctionCall();
   UID currentUID = 0;
   {
     UID id = 0;
@@ -1072,7 +1077,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::BeginScene() {
       gSceneState = SceneInProgress;
     }
   }
-  
+
   if (remixapi::g_bInterfaceInitialized && remixapi::g_beginSceneCallback) {
     remixapi::g_beginSceneCallback();
   }
@@ -1174,6 +1179,12 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::SetTransform(D3DTRANSFORMSTATETYPE St
     return D3DERR_INVALIDCALL;
   }
 
+  // MHFZ start
+  if (State == D3DTS_VIEW) {
+    m_camera.redirectCamera(const_cast<D3DMATRIX*>(pMatrix));
+  }
+  // MHFZ end
+
   const auto idx = mapXformStateTypeToIdx(State);
   UID currentUID = 0;
   {
@@ -1252,7 +1263,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::MultiplyTransform(D3DTRANSFORMSTATETY
   } else {
     m_state.transforms[idx] = result;
   }
-  
+
   return S_OK;
 }
 
@@ -1509,7 +1520,7 @@ template<bool EnableSync>
 HRESULT Direct3DDevice9Ex_LSS<EnableSync>::SetRenderState(D3DRENDERSTATETYPE State, DWORD Value) {
   ZoneScoped;
   LogFunctionCall();
-  
+
   UID currentUID = 0;
   {
     {
@@ -1546,7 +1557,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::GetRenderState(D3DRENDERSTATETYPE Sta
   if (pValue == nullptr) {
     return D3DERR_INVALIDCALL;
   }
-  
+
   {
     BRIDGE_DEVICE_LOCKGUARD();
     *pValue = m_state.renderStates[State];
@@ -1754,7 +1765,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::CreateStateBlock(D3DSTATEBLOCKTYPE Ty
 
   UID currentUID = 0;
   {
-    
+
     Direct3DStateBlock9_LSS* pLssSB = nullptr;
     {
       BRIDGE_DEVICE_LOCKGUARD();
@@ -2130,7 +2141,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::SetSamplerState(DWORD Sampler, D3DSAM
         m_stateRecording->m_captureState.samplerStates[samplerIdx][typeIdx] = Value;
         m_stateRecording->m_dirtyFlags.samplerStates[samplerIdx][typeIdx] = true;
       } else {
-        if (GlobalOptions::getEliminateRedundantSetterCalls() && 
+        if (GlobalOptions::getEliminateRedundantSetterCalls() &&
             m_state.samplerStates[samplerIdx][typeIdx] == Value) {
           return S_OK;
         }
@@ -2563,7 +2574,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::CreateVertexShader(CONST DWORD* pFunc
     c.send_data((uint32_t) pLssVertexShader->getId());
     c.send_data(dataSize);
     c.send_data(dataSize, (void*) pFunction);
-    
+
   }
   WAIT_FOR_OPTIONAL_CREATE_FUNCTION_SERVER_RESPONSE("CreateVertexShader()", D3DERR_INVALIDCALL, currentUID);
 }
@@ -2900,7 +2911,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::SetIndices(IDirect3DIndexBuffer9* pIn
     }
   }
   WAIT_FOR_OPTIONAL_SERVER_RESPONSE("SetIndices()", D3DERR_INVALIDCALL, currentUID);
-} 
+}
 
 template<bool EnableSync>
 HRESULT Direct3DDevice9Ex_LSS<EnableSync>::GetIndices(IDirect3DIndexBuffer9** ppIndexData) {
@@ -2926,7 +2937,7 @@ template<bool EnableSync>
 HRESULT Direct3DDevice9Ex_LSS<EnableSync>::CreatePixelShader(CONST DWORD* pFunction, IDirect3DPixelShader9** ppShader) {
   ZoneScoped;
   LogFunctionCall();
- 
+
   if(ppShader == NULL)
     return D3DERR_INVALIDCALL;
 
@@ -3434,7 +3445,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::ResetEx(D3DPRESENT_PARAMETERS* pPrese
     BRIDGE_DEVICE_LOCKGUARD();
     // Clear all device state and release implicit/internal objects
     releaseInternalObjects(false);
-    
+
     const auto presParam = Direct3DSwapChain9_LSS::sanitizePresentationParameters(*pPresentationParameters, getCreateParams());
     m_presParams = presParam;
     WndProc::unset();
@@ -3475,7 +3486,7 @@ HRESULT Direct3DDevice9Ex_LSS<EnableSync>::GetDisplayModeEx(UINT iSwapChain, D3D
   if (pMode == NULL || pRotation == NULL)
     return D3DERR_INVALIDCALL;
 
-  
+
   UID currentUID = 0;
   {
     ClientMessage c(Commands::IDirect3DDevice9Ex_GetDisplayModeEx, getId());
@@ -3566,7 +3577,7 @@ HRESULT BaseDirect3DDevice9Ex_LSS::setShaderConstants(const uint32_t startRegist
       }
     }
     return D3D_OK;
-  };
+    };
   if (m_stateRecording) {
     return ShaderT == ShaderType::Vertex
       ? setHelper(m_stateRecording->m_captureState.vertexConstants)
@@ -3610,7 +3621,7 @@ HRESULT BaseDirect3DDevice9Ex_LSS::getShaderConstants(const uint32_t startRegist
       }
     }
     return D3D_OK;
-  };
+    };
   return ShaderT == ShaderType::Vertex
     ? getHelper(m_state.vertexConstants)
     : getHelper(m_state.pixelConstants);

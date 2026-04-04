@@ -119,7 +119,30 @@ BaseDirect3DDevice9Ex_LSS::BaseDirect3DDevice9Ex_LSS(const bool bExtended,
   }
   Logger::debug("...server-side D3D9 device successfully created...");
   Logger::debug("...Device successfully created!");
+  // MHFZ start
+  loadConfig();
+  // MHFZ end
 }
+
+// MHFZ start
+HRESULT BaseDirect3DDevice9Ex_LSS::loadConfig() {
+  UID currentUID = 0;
+  {
+    ClientMessage c(Commands::MHFZ_GetConfig);
+    currentUID = c.get_uid();
+  }
+    WAIT_FOR_SERVER_RESPONSE("GetConfig()", D3DERR_INVALIDCALL, currentUID)
+    CameraData cameraData;
+    cameraData.customCameraEnable = (bool)DeviceBridge::get_data();
+    cameraData.cameraDistance = DeviceBridge::get_data();
+    cameraData.cameraXSpeed = DeviceBridge::get_data();
+    cameraData.cameraYSpeed = DeviceBridge::get_data();
+    m_camera.setCameraData(cameraData);
+    DeviceBridge::pop_front();
+  
+  return S_OK;
+}
+// MHFZ end
 
 void BaseDirect3DDevice9Ex_LSS::InitRamp() {
   for (uint32_t i = 0; i < NumControlPoints; i++) {

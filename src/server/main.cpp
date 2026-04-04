@@ -153,7 +153,17 @@ IDirect3DBaseTexture9* gCurrentCreatedTexture = nullptr;
 struct MHFZGameData : public IMHFZGameData {
   uint32_t areaID;
   uint32_t time;
+  uint32_t questID;
+  float targetPos[3];
 };
+
+struct MHFZConfigData : public IMHFZConfigData {
+  UINT cameraDistance;
+  UINT cameraXSpeed;
+  UINT cameraYSpeed;
+  bool customCameraEnable;
+};
+
 // MHFZ end
 
 // Global state
@@ -161,16 +171,16 @@ bool gbBridgeRunning = true;
 HANDLE hWait;
 
 namespace {
-template<typename SerializableT>
-static void deserializeFromQueue(SerializableT& serializableT) {
-  static_assert(is_serializable_v<SerializableT>, "deserializeRemixApiT(...)  may only be called with defined Serializable<T> types");
-  void* pSlzdData = nullptr;
-  const auto size = DeviceBridge::get_data(&pSlzdData);
-  SerializableT dslz(pSlzdData);
-  assert(size == dslz.size());
-  dslz.deserialize();
-  serializableT = std::move(dslz);
-}
+  template<typename SerializableT>
+  static void deserializeFromQueue(SerializableT& serializableT) {
+    static_assert(is_serializable_v<SerializableT>, "deserializeRemixApiT(...)  may only be called with defined Serializable<T> types");
+    void* pSlzdData = nullptr;
+    const auto size = DeviceBridge::get_data(&pSlzdData);
+    SerializableT dslz(pSlzdData);
+    assert(size == dslz.size());
+    dslz.deserialize();
+    serializableT = std::move(dslz);
+  }
 }
 
 static inline void safeDestroy(IUnknown* obj, uint32_t x86handle) {
@@ -267,7 +277,7 @@ template<typename T>
 static bool dumpLeakedObjects(const char* name, const T& map) {
   if (!map.empty()) {
     bridge_util::Logger::err(format_string("%zd objects discovered in %s map at "
-                              "Direct3D module eviction:", map.size(), name));
+                                           "Direct3D module eviction:", map.size(), name));
     for (auto& [handle, obj] : map) {
       bridge_util::Logger::err(format_string("\t%x -> %p", handle, obj));
     }
@@ -1262,7 +1272,7 @@ void ProcessDeviceCommandQueue() {
         }
         // MHFZ start : if texture can be replaced set the new one
         HRESULT hresult = FALSE;
-        #if !RTX_REMIX
+#if !RTX_REMIX
         IDirect3DBaseTexture9* replaceTexture = texturesManager.setTexture(pD3DDevice, pHandle);
         if (replaceTexture) {
           hresult = pD3DDevice->SetTexture(IN Stage, IN replaceTexture);
@@ -1270,9 +1280,9 @@ void ProcessDeviceCommandQueue() {
         else {
           hresult = pD3DDevice->SetTexture(IN Stage, IN pTexture);
         }
-        #else
+#else
         hresult = pD3DDevice->SetTexture(IN Stage, IN pTexture);
-        #endif
+#endif
         // MHFZ end
         assert(SUCCEEDED(hresult));
         SEND_OPTIONAL_SERVER_RESPONSE(hresult, currentUID);
@@ -1789,40 +1799,51 @@ void ProcessDeviceCommandQueue() {
 #ifdef ENABLE_PRESENT_SEMAPHORE_TRACE
         Logger::trace("Server side Present call received, releasing semaphore...");
 #endif
+        if (gpD3DSwapChains.size() > 0) {
+          GET_RES(pSwapChain, gpD3DSwapChains);
+          PULL_OBJ(RECT, pSourceRect);
+          PULL_OBJ(RECT, pDestRect);
+          PULL(uint32_t, hDestWindowOverride);
+          PULL_OBJ(RGNDATA, pDirtyRegion);
+          PULL(uint32_t, dwFlags);
+          // MHFZ start : game data
+          PULL(uint32_t, areaID);
+          PULL(uint32_t, time);
+          PULL(uint32_t, questID);
 
-        GET_RES(pSwapChain, gpD3DSwapChains);
-        PULL_OBJ(RECT, pSourceRect);
-        PULL_OBJ(RECT, pDestRect);
-        PULL(uint32_t, hDestWindowOverride);
-        PULL_OBJ(RGNDATA, pDirtyRegion);
-        PULL(uint32_t, dwFlags);
-        // MHFZ start : game data
-        PULL(uint32_t, areaID);
-        PULL(uint32_t, time);
-        // MHFZ end
+          PULL_OBJ(float, targetPosX);
+          PULL_OBJ(float, targetPosY);
+          PULL_OBJ(float, targetPosZ);
+          // MHFZ end
 
-        HWND hwnd = TRUNCATE_HANDLE(HWND, hDestWindowOverride);
+          HWND hwnd = TRUNCATE_HANDLE(HWND, hDestWindowOverride);
 
-        const auto hresult = pSwapChain->Present(pSourceRect, pDestRect, hwnd, pDirtyRegion, dwFlags);
+          const auto hresult = pSwapChain->Present(pSourceRect, pDestRect, hwnd, pDirtyRegion, dwFlags);
 
-        if (!SUCCEEDED(hresult)) {
-          std::stringstream ss;
-          ss << "Present() failed! Check all logs for reported errors.";
-        }
-        // MHFZ start : send game data through d3d9 device
-        MHFZGameData gameData;
-        gameData.areaID = areaID;
-        gameData.time = time;
+          if (!SUCCEEDED(hresult)) {
+            std::stringstream ss;
+            ss << "Present() failed! Check all logs for reported errors.";
+          }
+          // MHFZ start : send game data through d3d9 device
+          MHFZGameData gameData;
+          gameData.areaID = areaID;
+          gameData.time = time;
+          gameData.questID = questID;
 
-        gpD3DDevices.begin()->second->SendGameData(&gameData);
-        // MHFZ end
+          gameData.targetPos[0] = *targetPosX;
+          gameData.targetPos[1] = *targetPosY;
+          gameData.targetPos[2] = *targetPosZ;
 
-        // If we're syncing with the client on Present() then trigger the semaphore now
-        if (GlobalOptions::getPresentSemaphoreEnabled()) {
-          gpPresent->release();
+          gpD3DDevices.begin()->second->SendGameData(&gameData);
+          // MHFZ end
+
+          // If we're syncing with the client on Present() then trigger the semaphore now
+          if (GlobalOptions::getPresentSemaphoreEnabled()) {
+            gpPresent->release();
 #ifdef ENABLE_PRESENT_SEMAPHORE_TRACE
-          Logger::trace("Present semaphore released successfully.");
+            Logger::trace("Present semaphore released successfully.");
 #endif
+          }
         }
         break;
       }
@@ -1863,9 +1884,9 @@ void ProcessDeviceCommandQueue() {
       case IDirect3DSwapChain9_GetPresentParameters:
         break;
 
-      /*
-       * IDirect3DResource9 interface
-       */
+        /*
+         * IDirect3DResource9 interface
+         */
       case IDirect3DResource9_QueryInterface:
         break;
       case IDirect3DResource9_AddRef:
@@ -1874,7 +1895,7 @@ void ProcessDeviceCommandQueue() {
         break;
       case IDirect3DResource9_GetDevice:
         break;
-      // We shouldn't ever need to send private data across the bridge
+        // We shouldn't ever need to send private data across the bridge
       case IDirect3DResource9_SetPrivateData:
       case IDirect3DResource9_GetPrivateData:
       case IDirect3DResource9_FreePrivateData:
@@ -1901,9 +1922,9 @@ void ProcessDeviceCommandQueue() {
       case IDirect3DResource9_GetType:
         break;
 
-      /*
-       * IDirect3DVertexDeclaration9 interface
-       */
+        /*
+         * IDirect3DVertexDeclaration9 interface
+         */
       case IDirect3DVertexDeclaration9_QueryInterface:
         break;
       case IDirect3DVertexDeclaration9_AddRef:
@@ -1926,9 +1947,9 @@ void ProcessDeviceCommandQueue() {
       case IDirect3DVertexDeclaration9_GetDeclaration:
         break;
 
-      /*
-       * IDirect3DVertexShader9 interface
-       */
+        /*
+         * IDirect3DVertexShader9 interface
+         */
       case IDirect3DVertexShader9_QueryInterface:
         break;
       case IDirect3DVertexShader9_AddRef:
@@ -1951,9 +1972,9 @@ void ProcessDeviceCommandQueue() {
       case IDirect3DVertexShader9_GetFunction:
         break;
 
-      /*
-       * IDirect3DPixelShader9 interface
-       */
+        /*
+         * IDirect3DPixelShader9 interface
+         */
       case IDirect3DPixelShader9_QueryInterface:
         break;
       case IDirect3DPixelShader9_AddRef:
@@ -1976,9 +1997,9 @@ void ProcessDeviceCommandQueue() {
       case IDirect3DPixelShader9_GetFunction:
         break;
 
-      /*
-       * IDirect3DBaseTexture9 interface
-       */
+        /*
+         * IDirect3DBaseTexture9 interface
+         */
       case IDirect3DBaseTexture9_QueryInterface:
         break;
       case IDirect3DBaseTexture9_AddRef:
@@ -2059,11 +2080,11 @@ void ProcessDeviceCommandQueue() {
         GET_HND(pHandle);
         const auto& pTexture = (IDirect3DTexture9*) gpD3DResources[pHandle];
         // MHFZ start
-        #if !RTX_REMIX
+#if !RTX_REMIX
         texturesManager.destroyTexture(pHandle);
-        #else
+#else
         gpD3DDevices.begin()->second->DestroyBaseTexture(pTexture);
-        #endif
+#endif
         // MHFZ end
         safeDestroy(pTexture, pHandle);
         gpD3DResources.erase(pHandle);
@@ -2392,9 +2413,9 @@ void ProcessDeviceCommandQueue() {
         break;
       }
 
-        /*
-         * IDirect3DVertexBuffer9 interface
-         */
+      /*
+       * IDirect3DVertexBuffer9 interface
+       */
       case IDirect3DVertexBuffer9_QueryInterface:
         break;
       case IDirect3DVertexBuffer9_AddRef:
@@ -2655,7 +2676,7 @@ void ProcessDeviceCommandQueue() {
         FOR_EACH_RECT_ROW(lockedRect, height, format,
           memcpy(ptr, (PBYTE) pData + y * IncomingPitch, rowSize);
         )
-        hresult = pSurface->UnlockRect();
+          hresult = pSurface->UnlockRect();
         assert(SUCCEEDED(hresult));
 
         break;
@@ -2665,9 +2686,9 @@ void ProcessDeviceCommandQueue() {
       case IDirect3DSurface9_ReleaseDC:
         break;
 
-      /*
-       * IDirect3DVolume9 interface
-       */
+        /*
+         * IDirect3DVolume9 interface
+         */
       case IDirect3DVolume9_QueryInterface:
         break;
       case IDirect3DVolume9_AddRef:
@@ -2802,7 +2823,7 @@ void ProcessDeviceCommandQueue() {
             c.end_data_blob();
           }
         }
-      
+
         if (dwSize > 0) {
           delete[]pData;
         }
@@ -2873,7 +2894,7 @@ void ProcessDeviceCommandQueue() {
         PULL_D(Filter);
         PULL_D(MipFilter);
         PULL(D3DCOLOR, ColorKey);
-        #if !RTX_REMIX
+#if !RTX_REMIX
         wchar_t file_prefix[MAX_PATH] = L"";
         GetModuleFileNameW(nullptr, file_prefix, ARRAYSIZE(file_prefix));
 
@@ -2898,12 +2919,28 @@ void ProcessDeviceCommandQueue() {
           }
         }
         gCurrentCreatedTexture = 0;
-        #else
+#else
         gpD3DDevices.begin()->second->SendBaseTextureHash(TextureHash, gCurrentCreatedTexture);
         gCurrentCreatedTexture = nullptr;
-        #endif
+#endif
         SEND_OPTIONAL_CREATE_FUNCTION_SERVER_RESPONSE(S_OK, currentUID);
 
+        break;
+      }
+      case MHFZ_GetConfig:
+      {
+
+        ServerMessage c(Commands::Bridge_Response, currentUID);
+
+        MHFZConfigData configData;
+
+        gpD3DDevices.begin()->second->GetGonfigData(&configData);
+
+        c.send_data(configData.customCameraEnable);
+        c.send_data(configData.cameraDistance);
+        c.send_data(configData.cameraXSpeed);
+        c.send_data(configData.cameraYSpeed);
+        
         break;
       }
       // MHFZ end
@@ -2928,7 +2965,7 @@ void ProcessDeviceCommandQueue() {
         assert(matInfoSType == REMIXAPI_STRUCT_TYPE_MATERIAL_INFO);
         serialize::MaterialInfo matInfo;
         deserializeFromQueue(matInfo);
-        
+
         matInfo.pNext = nullptr;
 
         bool bMatExtExists = remixapi::pullBool();
@@ -2936,43 +2973,43 @@ void ProcessDeviceCommandQueue() {
         while(bMatExtExists) {
           const auto extSType = remixapi::pullSType();
           switch (extSType) {
-            case REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_OPAQUE_EXT:
-            {
-              assert(!exts.opaque.pNext);
-              deserializeFromQueue(exts.opaque);
-              pInfoProto->pNext = &(exts.opaque);
-              pInfoProto = &getInfoProto(exts.opaque);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_OPAQUE_SUBSURFACE_EXT:
-            {
-              assert(!exts.opaqueSubsurface.pNext);
-              deserializeFromQueue(exts.opaqueSubsurface);
-              pInfoProto->pNext = &(exts.opaqueSubsurface);
-              pInfoProto = &getInfoProto(exts.opaqueSubsurface);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_TRANSLUCENT_EXT:
-            {
-              assert(!exts.translucent.pNext);
-              deserializeFromQueue(exts.translucent);
-              pInfoProto->pNext = &(exts.translucent);
-              pInfoProto = &getInfoProto(exts.translucent);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_PORTAL_EXT:
-            {
-              assert(!exts.portal.pNext);
-              deserializeFromQueue(exts.portal);
-              pInfoProto->pNext = &(exts.portal);
-              pInfoProto = &getInfoProto(exts.portal);
-              break;
-            }
-            default:
-            {
-              Logger::warn("[Api_CreateMaterial] Unknown sType. Skipping.");
-              break;
-            }
+          case REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_OPAQUE_EXT:
+          {
+            assert(!exts.opaque.pNext);
+            deserializeFromQueue(exts.opaque);
+            pInfoProto->pNext = &(exts.opaque);
+            pInfoProto = &getInfoProto(exts.opaque);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_OPAQUE_SUBSURFACE_EXT:
+          {
+            assert(!exts.opaqueSubsurface.pNext);
+            deserializeFromQueue(exts.opaqueSubsurface);
+            pInfoProto->pNext = &(exts.opaqueSubsurface);
+            pInfoProto = &getInfoProto(exts.opaqueSubsurface);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_TRANSLUCENT_EXT:
+          {
+            assert(!exts.translucent.pNext);
+            deserializeFromQueue(exts.translucent);
+            pInfoProto->pNext = &(exts.translucent);
+            pInfoProto = &getInfoProto(exts.translucent);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_MATERIAL_INFO_PORTAL_EXT:
+          {
+            assert(!exts.portal.pNext);
+            deserializeFromQueue(exts.portal);
+            pInfoProto->pNext = &(exts.portal);
+            pInfoProto = &getInfoProto(exts.portal);
+            break;
+          }
+          default:
+          {
+            Logger::warn("[Api_CreateMaterial] Unknown sType. Skipping.");
+            break;
+          }
           }
           bMatExtExists = remixapi::pullBool();
         }
@@ -2984,7 +3021,7 @@ void ProcessDeviceCommandQueue() {
         } else {
           Logger::err("[RemixApi_CreateMaterial] Remix API call failed!");
         }
-        
+
         break;
       }
 
@@ -3007,7 +3044,7 @@ void ProcessDeviceCommandQueue() {
         serialize::MeshInfo meshInfo;
         deserializeFromQueue(meshInfo);
         meshInfo.pNext = nullptr;
-        
+
         for(size_t iSurf = 0; iSurf < meshInfo.surfaces_count; ++iSurf) {
           // If we don't const_cast, we'd have to copy the entire
           // remixapi_MeshInfo::surfaces_values array in order to get around
@@ -3057,7 +3094,7 @@ void ProcessDeviceCommandQueue() {
         assert(instSType == REMIXAPI_STRUCT_TYPE_INSTANCE_INFO);
         serialize::InstanceInfo instInfo;
         deserializeFromQueue(instInfo);
-        
+
         MeshHandle meshHandle(instInfo.mesh);
         if(meshHandle.isValid()) {
           instInfo.mesh = meshHandle;
@@ -3066,41 +3103,41 @@ void ProcessDeviceCommandQueue() {
         }
 
         instInfo.pNext = nullptr;
-        
+
         bool bInstExtExists = remixapi::pullBool();
         auto* pInfoProto = &getInfoProto(instInfo);
         while(bInstExtExists) {
           const auto extSType = remixapi::pullSType();
           switch (extSType) {
-            case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_OBJECT_PICKING_EXT:
-            {
-              assert(!exts.objectPicking.pNext);
-              deserializeFromQueue(exts.objectPicking);
-              pInfoProto->pNext = &(exts.objectPicking);
-              pInfoProto = &getInfoProto(exts.objectPicking);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT:
-            {
-              assert(!exts.blend.pNext);
-              deserializeFromQueue(exts.blend);
-              pInfoProto->pNext = &(exts.blend);
-              pInfoProto = &getInfoProto(exts.blend);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BONE_TRANSFORMS_EXT:
-            {
-              assert(!exts.boneXforms.pNext);
-              deserializeFromQueue(exts.boneXforms);
-              pInfoProto->pNext = &(exts.boneXforms);
-              pInfoProto = &getInfoProto(exts.boneXforms);
-              break;
-            }
-            default:
-            {
-              Logger::warn("[RemixApi_DrawInstance] Unknown sType. Skipping.");
-              break;
-            }
+          case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_OBJECT_PICKING_EXT:
+          {
+            assert(!exts.objectPicking.pNext);
+            deserializeFromQueue(exts.objectPicking);
+            pInfoProto->pNext = &(exts.objectPicking);
+            pInfoProto = &getInfoProto(exts.objectPicking);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BLEND_EXT:
+          {
+            assert(!exts.blend.pNext);
+            deserializeFromQueue(exts.blend);
+            pInfoProto->pNext = &(exts.blend);
+            pInfoProto = &getInfoProto(exts.blend);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_INSTANCE_INFO_BONE_TRANSFORMS_EXT:
+          {
+            assert(!exts.boneXforms.pNext);
+            deserializeFromQueue(exts.boneXforms);
+            pInfoProto->pNext = &(exts.boneXforms);
+            pInfoProto = &getInfoProto(exts.boneXforms);
+            break;
+          }
+          default:
+          {
+            Logger::warn("[RemixApi_DrawInstance] Unknown sType. Skipping.");
+            break;
+          }
           }
           bInstExtExists = remixapi::pullBool();
         }
@@ -3139,67 +3176,67 @@ void ProcessDeviceCommandQueue() {
         while(bLightExtExists) {
           const auto extSType = remixapi::pullSType();
           switch (extSType) {
-            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_SPHERE_EXT:
-            {
-              assert(!exts.sphere.pNext);
-              deserializeFromQueue(exts.sphere);
-              pInfoProto->pNext = &(exts.sphere);
-              pInfoProto = &getInfoProto(exts.sphere);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_RECT_EXT:
-            {
-              assert(!exts.rect.pNext);
-              deserializeFromQueue(exts.rect);
-              pInfoProto->pNext = &(exts.rect);
-              pInfoProto = &getInfoProto(exts.rect);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISK_EXT:
-            {
-              assert(!exts.disk.pNext);
-              deserializeFromQueue(exts.disk);
-              pInfoProto->pNext = &(exts.disk);
-              pInfoProto = &getInfoProto(exts.disk);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_CYLINDER_EXT:
-            {
-              assert(!exts.cylinder.pNext);
-              deserializeFromQueue(exts.cylinder);
-              pInfoProto->pNext = &(exts.cylinder);
-              pInfoProto = &getInfoProto(exts.cylinder);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISTANT_EXT:
-            {
-              assert(!exts.distant.pNext);
-              deserializeFromQueue(exts.distant);
-              pInfoProto->pNext = &(exts.distant);
-              pInfoProto = &getInfoProto(exts.distant);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DOME_EXT:
-            {
-              assert(!exts.dome.pNext);
-              deserializeFromQueue(exts.dome);
-              pInfoProto->pNext = &(exts.dome);
-              pInfoProto = &getInfoProto(exts.dome);
-              break;
-            }
-            case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_USD_EXT:
-            {
-              assert(!exts.usd.pNext);
-              deserializeFromQueue(exts.usd);
-              pInfoProto->pNext = &(exts.usd);
-              pInfoProto = &getInfoProto(exts.usd);
-              break;
-            }
-            default:
-            {
-              Logger::warn("[RemixApi_CreateLight] Unknown sType. Skipping.");
-              break;
-            }
+          case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_SPHERE_EXT:
+          {
+            assert(!exts.sphere.pNext);
+            deserializeFromQueue(exts.sphere);
+            pInfoProto->pNext = &(exts.sphere);
+            pInfoProto = &getInfoProto(exts.sphere);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_RECT_EXT:
+          {
+            assert(!exts.rect.pNext);
+            deserializeFromQueue(exts.rect);
+            pInfoProto->pNext = &(exts.rect);
+            pInfoProto = &getInfoProto(exts.rect);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISK_EXT:
+          {
+            assert(!exts.disk.pNext);
+            deserializeFromQueue(exts.disk);
+            pInfoProto->pNext = &(exts.disk);
+            pInfoProto = &getInfoProto(exts.disk);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_CYLINDER_EXT:
+          {
+            assert(!exts.cylinder.pNext);
+            deserializeFromQueue(exts.cylinder);
+            pInfoProto->pNext = &(exts.cylinder);
+            pInfoProto = &getInfoProto(exts.cylinder);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DISTANT_EXT:
+          {
+            assert(!exts.distant.pNext);
+            deserializeFromQueue(exts.distant);
+            pInfoProto->pNext = &(exts.distant);
+            pInfoProto = &getInfoProto(exts.distant);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_DOME_EXT:
+          {
+            assert(!exts.dome.pNext);
+            deserializeFromQueue(exts.dome);
+            pInfoProto->pNext = &(exts.dome);
+            pInfoProto = &getInfoProto(exts.dome);
+            break;
+          }
+          case REMIXAPI_STRUCT_TYPE_LIGHT_INFO_USD_EXT:
+          {
+            assert(!exts.usd.pNext);
+            deserializeFromQueue(exts.usd);
+            pInfoProto->pNext = &(exts.usd);
+            pInfoProto = &getInfoProto(exts.usd);
+            break;
+          }
+          default:
+          {
+            Logger::warn("[RemixApi_CreateLight] Unknown sType. Skipping.");
+            break;
+          }
           }
           bLightExtExists = remixapi::pullBool();
         }
@@ -3211,7 +3248,7 @@ void ProcessDeviceCommandQueue() {
         } else {
           Logger::err("[RemixApi_CreateLight] Remix API call failed!");
         }
-        
+
         break;
       }
 
@@ -3265,7 +3302,7 @@ void ProcessDeviceCommandQueue() {
                                               "most recently created by client application.");
         break;
       }
-      
+
       default:
         break;
       }
@@ -3309,9 +3346,9 @@ void ProcessDeviceCommandQueue() {
   }
 
   // MHFZ start
-  #if !RTX_REMIX
+#if !RTX_REMIX
   texturesManager.closeExecution();
-  #endif
+#endif
   // MHFZ end
 
   // Check if we exited the command processing loop unexpectedly while the bridge is still enabled
@@ -3535,7 +3572,7 @@ void UpdateTextureThread(uint32_t _threadID) {
 
 int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ PWSTR pCmdLine, _In_ int nCmdShow) {
   gTimeStart = std::chrono::high_resolution_clock::now();
-  
+
   if (!initFileSys()) {
     Logger::err("Failed to initialize rtx filesystem!");
     return 1;
@@ -3646,13 +3683,13 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
   });
 
   // MHFZ start : define every load texture threads
-  #if !RTX_REMIX
+#if !RTX_REMIX
   unsigned int nthreads = std::min(std::thread::hardware_concurrency(), TextureLoadThreadCount);
   std::vector<std::thread> threadsLoadingRessource;
   for (uint32_t threadID = 0; threadID < nthreads; ++threadID) {
     threadsLoadingRessource.emplace_back(&UpdateTextureThread, threadID);
   }
-  #endif
+#endif
   // MHFZ end
 
   // Process device commands
@@ -3661,11 +3698,11 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
   moduleCmdProcessingThread.join();
 
   // MHFZ start
-  #if !RTX_REMIX
+#if !RTX_REMIX
   for (uint32_t threadID = 0; threadID < nthreads; ++threadID) {
     threadsLoadingRessource[threadID].join();
   }
-  #endif
+#endif
   // MHFZ end
 
   if (!dumpLeakedObjects()) {

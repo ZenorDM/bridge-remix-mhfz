@@ -27,7 +27,9 @@
 #include "d3d9.h"
 #include "base.h"
 #include "shadow_map.h"
-
+ // MHFZ start
+#include "camera.h"
+// MHFZ end
 #include <array>
 
 class Direct3D9Ex_LSS;
@@ -146,7 +148,9 @@ protected:
   HWND getWinProcHwnd() const { return getPresentationHwnd() ? getPresentationHwnd() : getFocusHwnd(); }
 
   void InitRamp();
-  
+  // MHFZ start
+  HRESULT loadConfig();
+  // MHFZ end
   using ShaderType = ShaderConstants::ShaderType;
   using ConstantType = ShaderConstants::ConstantType;
 
@@ -292,4 +296,7 @@ protected:
 
   State m_state;
   Direct3DStateBlock9_LSS* m_stateRecording = nullptr;
+  // MHFZ start
+  Camera m_camera;
+  // MHFZ end
 };

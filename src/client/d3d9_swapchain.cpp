@@ -169,8 +169,17 @@ HRESULT Direct3DSwapChain9_LSS::Present(CONST RECT* pSourceRect, CONST RECT* pDe
   }
 
   // MHFZ start : load game date from mhfo-hd dll memory
-  UINT areaID = *((UINT*) ((UINT_PTR) mhfoHDhandle + 0xDC6BF48));
+  uint16_t areaID = *((uint16_t*) ((UINT_PTR) mhfoHDhandle + 0x0dc6cf98));
+
   UINT time = *((UINT*) ((UINT_PTR) mhfoHDhandle + 0xE7FE170));
+  UINT questID = *((UINT*) ((UINT_PTR) mhfoHDhandle + 0xEBEE53C));
+
+  if (questID == 0) {
+    areaID = *((UINT*) ((UINT_PTR) mhfoHDhandle + 0xDC6BF48));
+  }
+  float targetPosX = *((float*) ((UINT_PTR) mhfoHDhandle + 0x1C4A130));
+  float targetPosY = *((float*) ((UINT_PTR) mhfoHDhandle + 0x1C4A134));
+  float targetPosZ = *((float*) ((UINT_PTR) mhfoHDhandle + 0x1C4A138));
   // MHFZ end
 
   // Send present first
@@ -184,6 +193,10 @@ HRESULT Direct3DSwapChain9_LSS::Present(CONST RECT* pSourceRect, CONST RECT* pDe
     // MHFZ start : use SwapChain present command to send game data information to bridge
     c.send_data(areaID);
     c.send_data(time);
+    c.send_data(questID);
+    c.send_data(sizeof(float),&targetPosX);
+    c.send_data(sizeof(float), &targetPosY);
+    c.send_data(sizeof(float), &targetPosZ);
     // MHFZ end
   }
 
@@ -242,7 +255,7 @@ HRESULT Direct3DSwapChain9_LSS::GetBackBuffer(UINT iBackBuffer, D3DBACKBUFFER_TY
 
   Direct3DSurface9_LSS* pLssSurface = trackWrapper(new Direct3DSurface9_LSS(m_pDevice, this, desc, true));
   setChild(iBackBuffer, pLssSurface);
-    
+
   (*ppBackBuffer) = pLssSurface;
 
   UID currentUID = 0;
@@ -254,7 +267,7 @@ HRESULT Direct3DSwapChain9_LSS::GetBackBuffer(UINT iBackBuffer, D3DBACKBUFFER_TY
     c.send_data(Type);
     c.send_data(pLssSurface->getId());
   }
-  
+
   WAIT_FOR_OPTIONAL_SERVER_RESPONSE("GetBackBuffer()", D3DERR_INVALIDCALL, currentUID);
 }
 

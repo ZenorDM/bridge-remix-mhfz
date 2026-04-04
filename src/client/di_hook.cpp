@@ -31,10 +31,12 @@
 #include "di_hook.h"
 #include "window.h"
 
-// MHFZ start : required include
+ // MHFZ start : required include
 #include "d3dx9.h"
 #include <filesystem>
 #include <util_devicecommand.h>
+#include <d3dx9/d3dx9math.h>
+#include <camera.h>
 // MHFZ end
 
 using namespace bridge_util;
@@ -74,10 +76,26 @@ using DeviceArray = std::array<T,(size_t)kNumDeviceTypes>;
 // DirectInput translation and forwarding helper
 class DirectInputForwarder {
 public:
+  // MHFZ start
+  enum ControllerType {
+    Xbox = 0,
+    Playstation = 1
+  };
+  // MHFZ end
   static void init() {
     s_forwardPolicies[Mouse] = ClientOptions::getForwardDirectInputMousePolicy();
     s_forwardPolicies[Keyboard] = ClientOptions::getForwardDirectInputKeyboardPolicy();
   }
+  // MHFZ start
+  static inline LONG    s_joysticklx;
+  static inline LONG    s_joystickly;
+  static inline LONG    s_joysticklz;
+
+  static inline LONG    s_joysticklRx;
+  static inline LONG    s_joysticklRy;
+  static inline LONG    s_joysticklRz;
+  static inline ControllerType  s_controllerType;
+  // MHFZ end
 private:
   struct WndMsg {
     HWND hWnd;
@@ -155,7 +173,13 @@ public:
   static void setMouseExclusive(bool exclusive) {
     s_bIsExclusive[Mouse] = exclusive;
   }
-  
+
+  // MHFZ start
+  static void setJoystickExclusive(bool exclusive) {
+    s_bIsExclusive[Joystick] = exclusive;
+  }
+  // MHFZ end
+
   static void setWindow(HWND hwnd) {
     s_hwnd = hwnd;
     updateWindowSize();
@@ -164,6 +188,19 @@ public:
   static HWND getWindow() {
     return s_hwnd;
   }
+
+  // MHFZ start
+  static void updateJoystickState(DIJOYSTATE* state) {
+    s_joysticklx = state->lX;
+    s_joystickly = state->lY;
+    s_joysticklz = state->lZ;
+
+    s_joysticklRx = state->lRx;
+    s_joysticklRy = state->lRy;
+    s_joysticklRz = state->lRz;
+
+  }
+  // MHFZ end
 
   static void updateKeyState(LPBYTE KS) {
     bool windowUpdated = false;
@@ -317,9 +354,15 @@ protected:
 
   inline static void* MouseDevice = nullptr;
   inline static void* KeyboardDevice = nullptr;
+  // MHFZ start
+  inline static void* JoystickDevice = nullptr;
+  // MHFZ end
   inline static DWORD MouseAxisMode = DIPROPAXISMODE_REL;
   inline static bool MouseDeviceStateUsed = false;
   inline static bool KeyboardDeviceStateUsed = false;
+  // MHFZ start
+  inline static bool JoystickDeviceStateUsed = false;
+  // MHFZ end
 
   inline static constexpr DWORD kDefaultCooperativeLevel = DISCL_NONEXCLUSIVE | DISCL_FOREGROUND;
   inline static DeviceArray<DWORD> ogCooperativeLevel{kDefaultCooperativeLevel,
@@ -350,6 +393,9 @@ protected:
 
   inline static constexpr auto kMouseDevType = DI8DEVCLASS_POINTER;
   inline static constexpr auto kKeyboardDevType = DI8DEVCLASS_KEYBOARD;
+  // MHFZ start
+  inline static constexpr auto kJoystickDevType = DI8DEVCLASS_GAMECTRL;
+  // MHFZ end
   static HRESULT STDMETHODCALLTYPE HookedAcquire(void FAR* thiz) {
     LogStaticFunctionCall();
 
@@ -358,7 +404,7 @@ protected:
     gClientUsesDirectInput = true;
 
     // TODO: support acquiring new mouse/reaqiuring (?)
-    if (KeyboardDevice != thiz || MouseDevice != thiz) {
+    if (KeyboardDevice != thiz || MouseDevice != thiz || JoystickDevice != thiz) {
       IDirectInputDevice* di = (IDirectInputDevice*) thiz;
 
       DIDEVCAPS caps { sizeof(DIDEVCAPS) };
@@ -381,7 +427,32 @@ protected:
         if (ExclusiveMode.count(thiz) > 0) {
           DirectInputForwarder::setMouseExclusive(ExclusiveMode[thiz]);
         }
+      
+      } else if (JoystickDevice != thiz && (caps.dwDevType & 0xf) == kJoystickDevType) {
+        // MHFZ start 
+        ONCE(Logger::debug("DirectInput joystick acquired"));
+        Logger::trace("DirectInput joystick acquired");
+        JoystickDevice = thiz;
+
+        if (ExclusiveMode.count(thiz) > 0) {
+          DirectInputForwarder::setJoystickExclusive(ExclusiveMode[thiz]);
+        }
+        // MHFZ end
       }
+      // MHFZ start
+      DIDEVICEINSTANCE instance;
+      instance.dwSize = sizeof(DIDEVICEINSTANCE);
+
+      if (SUCCEEDED(di->GetDeviceInfo(&instance))) {
+        WORD vid = LOWORD(instance.guidProduct.Data1);
+        if (vid == 0x054C){
+          DirectInputForwarder::s_controllerType = DirectInputForwarder::ControllerType::Playstation;
+        }
+        if (vid == 0x045E) {
+          DirectInputForwarder::s_controllerType = DirectInputForwarder::ControllerType::Xbox;
+        }
+      }
+      // MHFZ end
     }
 
     return hr;
@@ -400,6 +471,13 @@ protected:
       ONCE(Logger::debug("DirectInput mouse unacquired"));
       Logger::trace("DirectInput mouse unacquired");
       MouseDevice = nullptr;
+
+    } else if (JoystickDevice && JoystickDevice == thiz) {
+      // MHFZ start
+      ONCE(Logger::debug("DirectInput joystick unacquired"));
+      Logger::trace("DirectInput joystick unacquired");
+      JoystickDevice = nullptr;
+      // MHFZ end
     }
 
     return hr;
@@ -419,6 +497,8 @@ protected:
       ogCooperativeLevel[Mouse] = dwFlags;
     } else if (thiz == KeyboardDevice) {
       ogCooperativeLevel[Keyboard] = dwFlags;
+    } else if (thiz == JoystickDevice) {
+      ogCooperativeLevel[Joystick] = dwFlags;
     }
 
     if (ClientOptions::getDisableExclusiveInput()) {
@@ -444,35 +524,44 @@ protected:
 
     switch (size) {
     case sizeof(DIMOUSESTATE):
-      DirectInputForwarder::updateMouseState(static_cast<DIMOUSESTATE*>(data),
-                                          MouseAxisMode == DIPROPAXISMODE_ABS);
-      MouseDeviceStateUsed = true;
+        DirectInputForwarder::updateMouseState(static_cast<DIMOUSESTATE*>(data),
+                                            MouseAxisMode == DIPROPAXISMODE_ABS);
+        MouseDeviceStateUsed = true;
 #ifdef _DEBUG
-      ONCE(Logger::info("DirectInput mouse state captured."));
+        ONCE(Logger::info("DirectInput mouse state captured."));
 #endif
-      break;
+        break;
     case sizeof(DIMOUSESTATE2):
-      DirectInputForwarder::updateMouseState(static_cast<DIMOUSESTATE2*>(data),
-                                          MouseAxisMode == DIPROPAXISMODE_ABS);
-      MouseDeviceStateUsed = true;
+          DirectInputForwarder::updateMouseState(static_cast<DIMOUSESTATE2*>(data),
+                                              MouseAxisMode == DIPROPAXISMODE_ABS);
+          MouseDeviceStateUsed = true;
 #ifdef _DEBUG
-      ONCE(Logger::info("DirectInput mouse(2) state captured."));
+          ONCE(Logger::info("DirectInput mouse(2) state captured."));
 #endif
-      break;
-    case 256:
-      DirectInputForwarder::updateKeyState(static_cast<LPBYTE>(data));
-      KeyboardDeviceStateUsed = true;
+          break;
+        case 256:
+          DirectInputForwarder::updateKeyState(static_cast<LPBYTE>(data));
+          KeyboardDeviceStateUsed = true;
 #ifdef _DEBUG
-      ONCE(Logger::info("DirectInput keyboard state captured."));
+          ONCE(Logger::info("DirectInput keyboard state captured."));
 #endif
-      break;
+          break;
+          // MHFZ start
+          case sizeof(DIJOYSTATE) :
+            DirectInputForwarder::updateJoystickState(static_cast<DIJOYSTATE*>(data));
+            JoystickDeviceStateUsed = true;
+#ifdef _DEBUG
+            ONCE(Logger::info("DirectInput joystick state captured."));
+#endif
+            break;
+            // MHFZ end
     }
 
     if (RemixState::isUIActive())  {
       // Remix UI is active - wipe input state
       memset(data, 0, size);
     }
-      
+
     return hr;
   }
 
@@ -514,6 +603,27 @@ protected:
             data[rgdod[n].dwOfs] = rgdod[n].dwData;
           }
           DirectInputForwarder::updateKeyState(data);
+          // MHFZ start
+        } else if (JoystickDevice == thiz && JoystickDeviceStateUsed == false) {
+          for (uint32_t n = 0; n < *pdwInOut; n++) {
+            DIJOYSTATE jstate { };
+            if (rgdod[n].dwOfs == DIJOFS_X) {
+              jstate.lX = (LONG) rgdod[n].dwData;
+            } else if (rgdod[n].dwOfs == DIJOFS_Y) {
+              jstate.lY = (LONG) rgdod[n].dwData;
+            } else if (rgdod[n].dwOfs == DIJOFS_Z) {
+              jstate.lZ = (LONG) rgdod[n].dwData;
+            }
+            if (rgdod[n].dwOfs == DIJOFS_RX) {
+              jstate.lRx = (LONG) rgdod[n].dwData;
+            } else if (rgdod[n].dwOfs == DIJOFS_RY) {
+              jstate.lRy = (LONG) rgdod[n].dwData;
+            } else if (rgdod[n].dwOfs == DIJOFS_RZ) {
+              jstate.lRz = (LONG) rgdod[n].dwData;
+            }
+            DirectInputForwarder::updateJoystickState(&jstate);
+          }
+          // MHFZ end
         }
       }
       // Remix UI is active - wipe input state
@@ -567,7 +677,7 @@ protected:
     StringCchCatA(szSystemLib, sizeof(szSystemLib), name);
     return szSystemLib;
   }
-  
+
 public:
   static void unsetCooperativeLevel() {
     const auto hwnd = DirectInputForwarder::getWindow();
@@ -580,6 +690,12 @@ public:
         OrigSetCooperativeLevel(KeyboardDevice, hwnd, kDefaultCooperativeLevel);
         ExclusiveMode[KeyboardDevice] = false;
       }
+      // MHFZ start
+      if (JoystickDevice != nullptr) {
+        OrigSetCooperativeLevel(JoystickDevice, hwnd, kDefaultCooperativeLevel);
+        ExclusiveMode[JoystickDevice] = false;
+      }
+      // MHFZ end
     }
   }
 
@@ -594,6 +710,12 @@ public:
         OrigSetCooperativeLevel(KeyboardDevice, hwnd, ogCooperativeLevel[Keyboard]);
         ExclusiveMode[KeyboardDevice] = (ogCooperativeLevel[Keyboard] & DISCL_EXCLUSIVE) != 0;
       }
+      // MHFZ start
+      if (JoystickDevice != nullptr) {
+        OrigSetCooperativeLevel(JoystickDevice, hwnd, ogCooperativeLevel[Keyboard]);
+        ExclusiveMode[JoystickDevice] = (ogCooperativeLevel[Joystick] & DISCL_EXCLUSIVE) != 0;
+      }
+      // MHFZ end
     }
   }
 };
@@ -678,7 +800,7 @@ class DirectInput8Hook: public DirectInputHookBase<8> {
            static_cast<const uint8_t*>(pSrcData),
            SrcDataSize);
 
- 
+
     HRESULT result = S_FALSE;
     result = OrigD3DXCreateTextureFromFileInMemoryEx(pDevice, pSrcData, SrcDataSize, Width, Height, MipLevels, Usage, Format, Pool, Filter, MipFilter, ColorKey, pSrcInfo, pPalette, ppTexture);
 
@@ -689,17 +811,68 @@ class DirectInput8Hook: public DirectInputHookBase<8> {
       c.send_many(hash, MipLevels, Usage, Format, Pool, Filter, MipFilter, ColorKey);
     }
     WAIT_FOR_OPTIONAL_CREATE_FUNCTION_SERVER_RESPONSE("LoadTexture()", D3DERR_INVALIDCALL, currentUID);
- 
+
     return result;
   }
+
+  static D3DXMATRIX* WINAPI HookedD3DXMatrixLookAtRH(
+      _Inout_       D3DXMATRIX* pOut,
+      _In_    const D3DXVECTOR3* pEye,
+      _In_    const D3DXVECTOR3* pAt,
+      _In_    const D3DXVECTOR3* pUp) {
+    D3DXMATRIX* rMatrix;
+    if (s_cameraPtr && s_cameraPtr->m_blockCustomCamera == false
+        ) {
+      D3DXVECTOR3 up(0, 1, 0);
+      *const_cast<D3DXVECTOR3*>(pEye) = s_cameraPtr->m_camPos;
+
+      *const_cast<D3DXVECTOR3*>(pUp) = up;
+
+      rMatrix = OrigD3DXMatrixLookAtRH(pOut, &s_cameraPtr->m_camPos, &s_cameraPtr->m_target, &up);
+    }
+    else {
+      rMatrix = OrigD3DXMatrixLookAtRH(pOut, pEye, pAt, pUp);
+    }
+    return rMatrix;
+  }
+
+  static D3DXMATRIX* WINAPI HookedD3DXMatrixPerspectiveFovRH(
+     _Inout_ D3DXMATRIX* pOut,
+    _In_    FLOAT      fovy,
+    _In_    FLOAT      Aspect,
+    _In_    FLOAT      zn,
+    _In_    FLOAT      zf) {
+    D3DXMATRIX* rMatrix;
+    auto degree = [](float angle) {
+      return angle * (180.0 / 3.1415);
+    };
+    auto radians = [](float angle) {
+      return angle * (3.1415 / 180);
+    };
+    bool fovReplaced = false;
+    if (s_cameraPtr) {
+      s_cameraPtr->m_fovY = degree(fovy);
+    }    
+    if (fovReplaced == false) {
+      rMatrix = OrigD3DXMatrixPerspectiveFovRH(pOut, fovy, Aspect, zn, zf);
+    }
+    return rMatrix;
+
+  }
+
   // MHFZ end
 
   API_HOOK_DECL(DirectInput8Create);
   // MHFZ start 
   API_HOOK_DECL(D3DXCreateTextureFromFileInMemoryEx);
+  API_HOOK_DECL(D3DXMatrixLookAtRH);
+  API_HOOK_DECL(D3DXMatrixPerspectiveFovRH);
   // MHFZ end
 
 public:
+  // MHFZ start
+  static inline Camera* s_cameraPtr;
+  // MHFZ end
   static bool attach() {
     // Attempt to retrieve the original injected APIs
     auto OrigLoadLibraryA = DetourRetrieveOriginal(LoadLibraryA);
@@ -774,9 +947,43 @@ public:
         Logger::warn(format_string("Unable to attach D3DXCreateTextureFromFileInMemoryEx %d", error));
         return false;
       }
-      Logger::info("d3dx9_43 hook attached.");
+      Logger::info("D3DXCreateTextureFromFileInMemoryEx hook attached.");
+    }
+    // MHFZ start
+    OrigD3DXMatrixLookAtRH = reinterpret_cast<decltype(OrigD3DXMatrixLookAtRH)>(
+      OrigGetProcAddress(hd3dx, "D3DXMatrixLookAtRH"));
+
+    if (nullptr == OrigD3DXMatrixLookAtRH) {
+      Logger::warn("Unable to get D3DXMatrixLookAtRH proc address. "
+                   "D3DXMatrixLookAtRH hook will not be available.");
+      return false;
+    } else {
+      LONG error = 0;
+      API_ATTACH(D3DXMatrixLookAtRH);
+      if (error) {
+        Logger::warn(format_string("Unable to attach D3DXMatrixLookAtRH %d", error));
+        return false;
+      }
+      Logger::info("D3DXMatrixLookAtRH hook attached.");
     }
 
+    OrigD3DXMatrixPerspectiveFovRH = reinterpret_cast<decltype(OrigD3DXMatrixPerspectiveFovRH)>(
+      OrigGetProcAddress(hd3dx, "D3DXMatrixPerspectiveFovRH"));
+
+    if (nullptr == OrigD3DXMatrixPerspectiveFovRH) {
+      Logger::warn("Unable to get D3DXMatrixPerspectiveFovRH proc address. "
+                   "D3DXMatrixPerspectiveFovRH hook will not be available.");
+      return false;
+    } else {
+      LONG error = 0;
+      API_ATTACH(D3DXMatrixPerspectiveFovRH);
+      if (error) {
+        Logger::warn(format_string("Unable to attach D3DXMatrixPerspectiveFovRH %d", error));
+        return false;
+      }
+      Logger::info("D3DXMatrixPerspectiveFovRH hook attached.");
+    }
+    // MHFZ end
     return res;
   }
 
@@ -1021,7 +1228,7 @@ namespace {
 
 static LRESULT CALLBACK HookedCallWndProc(int nCode, WPARAM wParam, LPARAM lParam) {
   LogStaticFunctionCall();
-  
+
   if (nCode >= 0) {
     if (RemixState::isUIActive()) {
       return 0;
@@ -1033,7 +1240,7 @@ static LRESULT CALLBACK HookedCallWndProc(int nCode, WPARAM wParam, LPARAM lPara
 
 static LRESULT CALLBACK HookedGetMsgProc(int nCode, WPARAM wParam, LPARAM lParam) {
   LogStaticFunctionCall();
-  
+
   if (nCode >= 0) {
     if (RemixState::isUIActive()) {
       return 0;
@@ -1177,7 +1384,7 @@ static void InputWinHooksAttach() {
     }
     Logger::warn(format_string("SetWindowsHookEx failed with idHook=%d", idHook));
     return std::pair { idHook , static_cast<HHOOK>(nullptr) };
-  };
+    };
 
   gWinHooks = {
     attachWinHook(WH_CALLWNDPROC, HookedCallWndProc),
@@ -1290,14 +1497,32 @@ void DInputSetDefaultWindow(HWND hwnd) {
 
 namespace DI {
 
-void unsetCooperativeLevel() {
-  DirectInput7Hook::unsetCooperativeLevel();
-  DirectInput8Hook::unsetCooperativeLevel();
-}
+  void unsetCooperativeLevel() {
+    DirectInput7Hook::unsetCooperativeLevel();
+    DirectInput8Hook::unsetCooperativeLevel();
+  }
 
-void resetCooperativeLevel() {
-  DirectInput7Hook::resetCooperativeLevel();
-  DirectInput8Hook::resetCooperativeLevel();
-}
+  void resetCooperativeLevel() {
+    DirectInput7Hook::resetCooperativeLevel();
+    DirectInput8Hook::resetCooperativeLevel();
+  }
+  // MHFZ start
+  float getLeftStickXAxis() {
+    if (DirectInputForwarder::s_controllerType == DirectInputForwarder::ControllerType::Playstation)
+      return (float) DirectInputForwarder::s_joysticklz;
+    else
+      return (float) DirectInputForwarder::s_joysticklRx;
+  }
 
+  float getLeftStickYAxis() {
+    if(DirectInputForwarder::s_controllerType == DirectInputForwarder::ControllerType::Playstation)
+      return (float) DirectInputForwarder::s_joysticklRz;
+    else
+      return (float) DirectInputForwarder::s_joysticklRy;
+  }
+
+  void setCamera(Camera* cam) {
+    DirectInput8Hook::s_cameraPtr = cam;
+  }
+  // MHFZ end
 }

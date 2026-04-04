@@ -22,7 +22,9 @@
 #pragma once
 
 #include "d3d9_device_base.h"
-
+ // MHFZ start
+#include "d3dx9/d3dx9math.h"
+// MHFZ end
 #include "util_common.h"
 #include "util_scopedlock.h"
 

@@ -28,24 +28,31 @@ extern void DInputHookDetach();
 extern void DInputSetDefaultWindow(HWND hwnd);
 
 extern void InputWinHooksReattach();
-
+// MHFZ start
+class Camera;
+// MHFZ end
 namespace DI {
-  
-enum DeviceType {
-  Mouse    = 0,
-  Keyboard = 1,
-  kNumDeviceTypes
-};
 
-enum ForwardPolicy {
-  Never           = 0,
-  RemixUIInactive = 1,
-  RemixUIActive   = 2,
-  Always          = 3,
-  kNumForwardPolicies
-};
+  enum DeviceType {
+    Mouse = 0,
+    Keyboard = 1,
+    Joystick = 2,
+    kNumDeviceTypes
+  };
 
-extern void unsetCooperativeLevel();
-extern void resetCooperativeLevel();
+  enum ForwardPolicy {
+    Never = 0,
+    RemixUIInactive = 1,
+    RemixUIActive = 2,
+    Always = 3,
+    kNumForwardPolicies
+  };
 
+  extern void unsetCooperativeLevel();
+  extern void resetCooperativeLevel();
+  // MHFZ start
+  extern float getLeftStickXAxis();
+  extern float getLeftStickYAxis();
+  extern void setCamera(Camera* cam);
+  // MHFZ end
 }

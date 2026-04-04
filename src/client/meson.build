@@ -53,6 +53,7 @@ d3d9_src = files([
   'remix_api.cpp',
   'remix_state.cpp',
   'window.cpp',
+  'camera.cpp',
 ])
 
 d3d9_header = files([
@@ -90,6 +91,7 @@ d3d9_header = files([
   'resource.h',
   'shadow_map.h',
   'window.h',
+  'camera.h',
 ])
 
 d3d9_def = files([

@@ -56,6 +56,7 @@ namespace Commands {
 
     // MHFZ start : specif command to load a texture based on texture CRC 
     MHFZ_LoadTexture,
+    MHFZ_GetConfig,
     // MHFZ end
     
     // Unlink x86 d3d9 resource from x64 counterpart to prevent hash
