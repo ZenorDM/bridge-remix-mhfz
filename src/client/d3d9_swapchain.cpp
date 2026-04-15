@@ -208,7 +208,6 @@ void patcher() {
       *(BYTE*) hookAddr = 0xE9;
       *(DWORD*) (hookAddr + 1) = (DWORD) hookDamageCompute - hookAddr - 5;
 
-      // NOP pour combler
       for (int i = 5; i < HOOKSIZE; i++)
         *(BYTE*) (hookAddr + i) = 0x90;
       VirtualProtect((void*) hookAddr, HOOKSIZE, old, &old);
@@ -224,8 +223,6 @@ void patcher() {
       // JMP rel32
       *(BYTE*) hookAddr2 = 0xE9;
       *(DWORD*) (hookAddr2 + 1) = (DWORD) hookDamageCompute2 - hookAddr2 - 5;
-
-      // NOP pour combler
       for (int i = 5; i < HOOKSIZE2; i++)
         *(BYTE*) (hookAddr2 + i) = 0x90;
       VirtualProtect((void*) hookAddr2, HOOKSIZE2, old2, &old2);

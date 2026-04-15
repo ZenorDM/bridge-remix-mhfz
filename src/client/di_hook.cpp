@@ -1511,20 +1511,17 @@ namespace DI {
         XINPUT_VIBRATION vibration;
         ZeroMemory(&vibration, sizeof(XINPUT_VIBRATION));
 
-        // XInput utilise WORD (0-65535)
         vibration.wLeftMotorSpeed = static_cast<WORD>(leftMotor * 65535.0f);
         vibration.wRightMotorSpeed = static_cast<WORD>(rightMotor * 65535.0f);
 
-        // Appliquer la vibration
         XInputSetState(controllerIndex, &vibration);
 
-        // Thread pour arrêter la vibration après la durée
         std::thread([controllerIndex, durationMs, this]() {
           std::this_thread::sleep_for(std::chrono::milliseconds(durationMs));
           m_currentIntensity = 0;
           XINPUT_VIBRATION stopVibration = {};
           XInputSetState(controllerIndex, &stopVibration);
-        }).detach(); // détache le thread pour ne pas bloquer
+        }).detach();
       }
     }
 
