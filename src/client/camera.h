@@ -5,6 +5,7 @@ struct CameraData {
   UINT cameraDistance;
   UINT cameraXSpeed;
   UINT cameraYSpeed;
+  UINT cameraDeadZonePercent;
   bool customCameraEnable;
 };
 
@@ -19,6 +20,7 @@ public:
     UINT timeDef;
     UINT time;
     int questID;
+    int questState;
     D3DXVECTOR3 target;
     D3DXVECTOR3 targetWithCollision;
     D3DXVECTOR3 eyePos;

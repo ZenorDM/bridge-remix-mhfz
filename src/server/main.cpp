@@ -154,6 +154,7 @@ struct MHFZGameData : public IMHFZGameData {
   uint32_t areaID;
   uint32_t time;
   uint32_t questID;
+  int damage;
   float targetPos[3];
 };
 
@@ -161,6 +162,7 @@ struct MHFZConfigData : public IMHFZConfigData {
   UINT cameraDistance;
   UINT cameraXSpeed;
   UINT cameraYSpeed;
+  UINT cameraDeadZonePercent;
   bool customCameraEnable;
 };
 
@@ -1810,6 +1812,7 @@ void ProcessDeviceCommandQueue() {
           PULL(uint32_t, areaID);
           PULL(uint32_t, time);
           PULL(uint32_t, questID);
+          PULL(int, damage);
 
           PULL_OBJ(float, targetPosX);
           PULL_OBJ(float, targetPosY);
@@ -1829,6 +1832,7 @@ void ProcessDeviceCommandQueue() {
           gameData.areaID = areaID;
           gameData.time = time;
           gameData.questID = questID;
+          gameData.damage = damage;
 
           gameData.targetPos[0] = *targetPosX;
           gameData.targetPos[1] = *targetPosY;
@@ -2940,6 +2944,7 @@ void ProcessDeviceCommandQueue() {
         c.send_data(configData.cameraDistance);
         c.send_data(configData.cameraXSpeed);
         c.send_data(configData.cameraYSpeed);
+        c.send_data(configData.cameraDeadZonePercent);
         
         break;
       }

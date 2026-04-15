@@ -137,6 +137,7 @@ HRESULT BaseDirect3DDevice9Ex_LSS::loadConfig() {
     cameraData.cameraDistance = DeviceBridge::get_data();
     cameraData.cameraXSpeed = DeviceBridge::get_data();
     cameraData.cameraYSpeed = DeviceBridge::get_data();
+    cameraData.cameraDeadZonePercent = DeviceBridge::get_data();
     m_camera.setCameraData(cameraData);
     DeviceBridge::pop_front();
   

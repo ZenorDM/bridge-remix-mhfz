@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2022-2024, NVIDIA CORPORATION. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -37,6 +37,10 @@
 #include <util_devicecommand.h>
 #include <d3dx9/d3dx9math.h>
 #include <camera.h>
+
+#include <Xinput.h>
+#pragma comment(lib, "Xinput.lib")
+
 // MHFZ end
 
 using namespace bridge_util;
@@ -822,6 +826,7 @@ class DirectInput8Hook: public DirectInputHookBase<8> {
       _In_    const D3DXVECTOR3* pUp) {
     D3DXMATRIX* rMatrix;
     if (s_cameraPtr && s_cameraPtr->m_blockCustomCamera == false
+        && abs(s_cameraPtr->m_camPos.y - pEye->y) < 2000.0f // shadow
         ) {
       D3DXVECTOR3 up(0, 1, 0);
       *const_cast<D3DXVECTOR3*>(pEye) = s_cameraPtr->m_camPos;
@@ -1497,6 +1502,43 @@ void DInputSetDefaultWindow(HWND hwnd) {
 
 namespace DI {
 
+  class XInputVibrationManager {
+  public:
+    void Vibrate(int controllerIndex, float leftMotor, float rightMotor, int durationMs) {
+      float intensity = (leftMotor * 0.5f + rightMotor * 1.0f);
+      if (m_currentIntensity < intensity) {
+        m_currentIntensity = intensity;
+        XINPUT_VIBRATION vibration;
+        ZeroMemory(&vibration, sizeof(XINPUT_VIBRATION));
+
+        // XInput utilise WORD (0-65535)
+        vibration.wLeftMotorSpeed = static_cast<WORD>(leftMotor * 65535.0f);
+        vibration.wRightMotorSpeed = static_cast<WORD>(rightMotor * 65535.0f);
+
+        // Appliquer la vibration
+        XInputSetState(controllerIndex, &vibration);
+
+        // Thread pour arrêter la vibration après la durée
+        std::thread([controllerIndex, durationMs, this]() {
+          std::this_thread::sleep_for(std::chrono::milliseconds(durationMs));
+          m_currentIntensity = 0;
+          XINPUT_VIBRATION stopVibration = {};
+          XInputSetState(controllerIndex, &stopVibration);
+        }).detach(); // détache le thread pour ne pas bloquer
+      }
+    }
+
+  private:
+
+    float m_currentIntensity = 0.0f;
+  };
+
+  static  XInputVibrationManager vibManager;
+  void vibrate(int controllerIndex, float leftMotor, float rightMotor, int durationMs) {
+    vibManager.Vibrate(controllerIndex, leftMotor, rightMotor, durationMs);
+  }
+
+
   void unsetCooperativeLevel() {
     DirectInput7Hook::unsetCooperativeLevel();
     DirectInput8Hook::unsetCooperativeLevel();
@@ -1507,18 +1549,51 @@ namespace DI {
     DirectInput8Hook::resetCooperativeLevel();
   }
   // MHFZ start
-  float getLeftStickXAxis() {
-    if (DirectInputForwarder::s_controllerType == DirectInputForwarder::ControllerType::Playstation)
-      return (float) DirectInputForwarder::s_joysticklz;
-    else
-      return (float) DirectInputForwarder::s_joysticklRx;
+  float getRightStickXAxis(UINT deadZonePercent) {
+
+    XINPUT_STATE state;
+    ZeroMemory(&state, sizeof(XINPUT_STATE));
+
+    DWORD result = XInputGetState(0, &state);
+
+
+    if(result == ERROR_SUCCESS) {
+
+      const int DEADZONE = static_cast<int>((float)XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE * float(deadZonePercent / 100.0f));
+      float normX = 0.0f;
+
+      if (abs(state.Gamepad.sThumbRX) > DEADZONE)
+        normX = state.Gamepad.sThumbRX / 32767.0f;
+
+      return normX;
+    } else {
+      if (DirectInputForwarder::s_controllerType == DirectInputForwarder::ControllerType::Playstation)
+        return (float) DirectInputForwarder::s_joysticklz * 2048.0f;
+      else
+        return (float) DirectInputForwarder::s_joysticklRx * 2048.0f;
+    }
   }
 
-  float getLeftStickYAxis() {
-    if(DirectInputForwarder::s_controllerType == DirectInputForwarder::ControllerType::Playstation)
-      return (float) DirectInputForwarder::s_joysticklRz;
-    else
-      return (float) DirectInputForwarder::s_joysticklRy;
+  float getRightStickYAxis(UINT deadZonePercent) {
+    XINPUT_STATE state;
+    ZeroMemory(&state, sizeof(XINPUT_STATE));
+
+    DWORD result = XInputGetState(0, &state);
+
+    if (result == ERROR_SUCCESS) {
+      const int DEADZONE = static_cast<int>((float) XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE * float(deadZonePercent / 100.0f));
+      float normy = 0.0f;
+
+      if (abs(state.Gamepad.sThumbRY) > DEADZONE)
+        normy = state.Gamepad.sThumbRY / 32767.0f;
+
+      return normy;
+    } else {
+      if (DirectInputForwarder::s_controllerType == DirectInputForwarder::ControllerType::Playstation)
+        return (float) DirectInputForwarder::s_joysticklRz * 2048.0f;
+      else
+        return (float) DirectInputForwarder::s_joysticklRy * 2048.0f;
+    }
   }
 
   void setCamera(Camera* cam) {

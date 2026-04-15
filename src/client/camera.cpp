@@ -2,6 +2,7 @@
 #include "di_hook.h"
 #include "utility"
 #include <array>
+#include <chrono>
 
 std::array<UINT, 5> areaToFilter = {
   173,
@@ -13,6 +14,7 @@ std::array<UINT, 5> areaToFilter = {
 
 namespace {
   static bool patched = false;
+  static auto lastTime = std::chrono::high_resolution_clock::now();
   void patchDisableCulling(Camera::RequiredGameData& data) {
     if (!patched) {
       patched = true;
@@ -34,6 +36,8 @@ namespace {
 
 Camera::RequiredGameData Camera::readGameMemory() {
 
+  static float lastTragetColiisionY = 0;
+
   RequiredGameData data;
   data.mhfoHDhandle = (UINT_PTR) GetModuleHandleW(L"mhfo-hd.dll");
   patchDisableCulling(data);
@@ -42,6 +46,7 @@ Camera::RequiredGameData Camera::readGameMemory() {
   data.timeDef = *((UINT*) (data.mhfoHDhandle + 0x2AFA820));
   data.time = *((UINT*) (data.mhfoHDhandle + 0xE7FE170));
   data.questID = *((int*) ( data.mhfoHDhandle + 0xEBEE53C));
+  data.questState = *((int*) ( data.mhfoHDhandle + 0xED52892));
 
   float targetXCollide = *((float*) (data.mhfoHDhandle + 0xE7FFFCC));
   float targetYCollide = *((float*) (data.mhfoHDhandle + 0xE7FFFD0));
@@ -66,7 +71,12 @@ Camera::RequiredGameData Camera::readGameMemory() {
     data.target = data.targetWithCollision;
   }
 
+  if (abs(lastTragetColiisionY - data.targetWithCollision.y) > 2 && abs(lastTragetColiisionY - data.targetWithCollision.y) < 10 && data.questID != 0) {
 
+    data.target.y += data.targetWithCollision.y - lastTragetColiisionY;
+  }
+
+  lastTragetColiisionY = data.targetWithCollision.y;
   return data;
 }
 
@@ -76,12 +86,24 @@ void Camera::setCameraData(const CameraData& cameraData) {
 
 void Camera::update() {
   RequiredGameData data = readGameMemory();
-
+  auto currentTime = std::chrono::high_resolution_clock::now();
+  float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+  lastTime = currentTime;
   DI::setCamera(this);
-  if (m_cameraData.customCameraEnable && std::find(areaToFilter.begin(), areaToFilter.end(), data.areaID) == areaToFilter.end()) {
+
+  bool endQuestCinematic = false;
+  // wait until cam resync
+  if (data.questState == 1) {
+    D3DXVECTOR3 eyeToCan = { data.targetWithCollision.x - data.target.x,data.targetWithCollision.y - data.target.y,data.targetWithCollision.z - data.target.z };
+    float targetDistance = D3DXVec3Length(&eyeToCan);
+
+    endQuestCinematic = targetDistance > 20.0f;
+  }
+
+  if (endQuestCinematic == false && m_cameraData.customCameraEnable && std::find(areaToFilter.begin(), areaToFilter.end(), data.areaID) == areaToFilter.end()) {
     syncCameraToGameCamera(data);
-    m_camYaw += DI::getLeftStickXAxis() / 2048.0f * m_cameraData.cameraXSpeed;
-    m_camPitch += DI::getLeftStickYAxis() / 2048.0f * m_cameraData.cameraYSpeed;
+    m_camYaw += DI::getRightStickXAxis(m_cameraData.cameraDeadZonePercent) * m_cameraData.cameraXSpeed * deltaTime * 30.f;
+    m_camPitch -= DI::getRightStickYAxis(m_cameraData.cameraDeadZonePercent) * m_cameraData.cameraYSpeed * deltaTime * 30.0f;
 
     m_camPitch = std::min(std::max(m_camPitch, -60.0f), 80.0f);
 

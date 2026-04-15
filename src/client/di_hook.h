@@ -51,8 +51,10 @@ namespace DI {
   extern void unsetCooperativeLevel();
   extern void resetCooperativeLevel();
   // MHFZ start
-  extern float getLeftStickXAxis();
-  extern float getLeftStickYAxis();
+  extern float getRightStickXAxis(UINT deadZonePercent);
+  extern float getRightStickYAxis(UINT deadZonePercent);
+
   extern void setCamera(Camera* cam);
+  extern void vibrate(int controllerIndex, float leftMotor, float rightMotor, int durationMs);
   // MHFZ end
 }
